@@ -25,10 +25,13 @@ from typing import (
 )
 
 from langchain_core.callbacks import Callbacks
+from langchain_core.runnables import RunnableConfig
 
 from langgraph._internal._constants import (
     CONF,
     CONFIG_KEY_CALL,
+    CONFIG_KEY_RUNNER_SUBMIT,
+    CONFIG_KEY_RUNNER_SUBMIT_MODE,
     CONFIG_KEY_SCRATCHPAD,
     ERROR,
     ERROR_SOURCE_NODE,
@@ -70,6 +73,101 @@ EXCLUDED_FRAME_FNAMES = (
 SKIP_RERAISE_SET: weakref.WeakSet[concurrent.futures.Future | asyncio.Future] = (
     weakref.WeakSet()
 )
+
+RUNNER_SUBMIT_MODES = ("background", "inline")
+"""Accepted values for `CONFIG_KEY_RUNNER_SUBMIT_MODE`."""
+
+# Kwargs `PregelRunner` passes when scheduling a task. An inline submit runs the
+# callable synchronously, so there is nothing to name, cancel, re-raise on
+# exit, or defer to a later tick.
+_INLINE_IGNORED_KWARGS = (
+    "__name__",
+    "__cancel_on_exit__",
+    "__reraise_on_exit__",
+    "__next_tick__",
+)
+
+
+def _inline_submit(
+    fn: Callable[..., Any], *args: Any, **kwargs: Any
+) -> concurrent.futures.Future:
+    """Run `fn` on the calling thread and return an already-completed Future.
+
+    Callers with thread-affine ambient state (thread-local DB connections,
+    `contextvars` snapshots, SQLAlchemy scoped sessions, `threading.local()`
+    caches) need node bodies to execute on the thread that invoked the graph,
+    otherwise the work lands outside the caller's transaction or context.
+    """
+    for key in _INLINE_IGNORED_KWARGS:
+        kwargs.pop(key, None)
+    fut: concurrent.futures.Future = concurrent.futures.Future()
+    try:
+        fut.set_result(fn(*args, **kwargs))
+    except BaseException as exc:
+        # Surfaced to the runner through the Future, exactly as a pooled
+        # task's exception would be.
+        fut.set_exception(exc)
+    return fut
+
+
+def _inline_submit_factory() -> Submit:
+    """Return the inline submit.
+
+    `PregelRunner` stores `submit` as a weakref and dereferences it on use
+    (`self.submit()(fn, ...)`), so the config value has to be a factory rather
+    than the callable itself.
+    """
+    return cast(Submit, _inline_submit)
+
+
+def resolve_runner_submit(
+    config: RunnableConfig,
+    default: weakref.ref[Submit],
+    *,
+    supports_inline: bool = True,
+) -> weakref.ref[Submit] | Callable[[], Submit]:
+    """Resolve the runner's `submit` from config.
+
+    Precedence:
+      1. `CONFIG_KEY_RUNNER_SUBMIT` - explicit override. Kept for backwards
+         compatibility; it must remain a *factory* because `PregelRunner`
+         dereferences it.
+      2. `CONFIG_KEY_RUNNER_SUBMIT_MODE` - public switch taking a plain string,
+         so callers never hand-construct a factory.
+      3. `default` - normally `weakref.WeakMethod(loop.submit)`.
+
+    Note the mode only affects supersteps with 2+ tasks: `tick` has a
+    single-task fast path that already runs the task inline on the caller.
+
+    Args:
+        supports_inline: whether the calling execution path can honor
+            `"inline"`. Async execution cannot (see below), and raises instead
+            of silently falling back.
+    """
+    override = config[CONF].get(CONFIG_KEY_RUNNER_SUBMIT)
+    if override is not None:
+        return cast(Any, override)
+    mode = config[CONF].get(CONFIG_KEY_RUNNER_SUBMIT_MODE)
+    if mode is not None:
+        if mode not in RUNNER_SUBMIT_MODES:
+            raise ValueError(
+                f"Invalid {CONFIG_KEY_RUNNER_SUBMIT_MODE!r} value {mode!r};"
+                f" expected one of {', '.join(map(repr, RUNNER_SUBMIT_MODES))}."
+            )
+        if mode == "inline":
+            if not supports_inline:
+                # Async node bodies already run on the event loop thread, so
+                # there is no thread affinity to preserve. The async analogue
+                # of the problem is per-Task `contextvars` isolation, which an
+                # inline submit cannot fix without awaiting inside `tick`.
+                # Raise rather than silently doing nothing.
+                raise ValueError(
+                    'Runner submit mode "inline" is only supported for sync '
+                    "execution (invoke/stream); async execution already runs "
+                    "node bodies on the calling event loop."
+                )
+            return _inline_submit_factory
+    return default
 
 
 class FuturesDict(Generic[F, E], dict[F, PregelExecutableTask | None]):

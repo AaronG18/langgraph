@@ -6,8 +6,30 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.runnables.config import var_child_runnable_config
 from langgraph.store.base import BaseStore
 
-from langgraph._internal._constants import CONF, CONFIG_KEY_RUNTIME
+from langgraph._internal._constants import (
+    CONF,
+    CONFIG_KEY_RUNTIME,
+)
+from langgraph._internal._constants import (
+    CONFIG_KEY_RUNNER_SUBMIT_MODE as CONFIG_KEY_RUNNER_SUBMIT_MODE,
+)
 from langgraph.types import StreamWriter
+
+# `CONFIG_KEY_RUNNER_SUBMIT_MODE` is re-exported here so callers never have to
+# reach into `langgraph._internal`. Pass it under `configurable`:
+#
+#     graph.invoke(x, config={"configurable": {
+#         CONFIG_KEY_RUNNER_SUBMIT_MODE: "inline",   # or "background" (default)
+#     }})
+#
+# "inline" runs each superstep's tasks on the calling thread instead of the
+# runner's BackgroundExecutor, for callers with thread-affine ambient state such
+# as thread-local DB connections (e.g. a Django `transaction.atomic()` block),
+# `contextvars` snapshots, or scoped sessions.
+#
+# Only supersteps with 2+ tasks are affected: a single-task superstep already
+# runs inline on the caller. Async execution does not support "inline" - node
+# bodies already run on the calling event loop.
 
 
 def _no_op_stream_writer(c: Any) -> None:

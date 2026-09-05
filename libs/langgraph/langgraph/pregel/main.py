@@ -72,7 +72,6 @@ from langgraph._internal._constants import (
     CONFIG_KEY_DURABILITY,
     CONFIG_KEY_NODE_FINISHED,
     CONFIG_KEY_READ,
-    CONFIG_KEY_RUNNER_SUBMIT,
     CONFIG_KEY_RUNTIME,
     CONFIG_KEY_SEND,
     CONFIG_KEY_STREAM,
@@ -148,7 +147,7 @@ from langgraph.pregel._messages import (
 )
 from langgraph.pregel._read import DEFAULT_BOUND, PregelNode
 from langgraph.pregel._retry import RetryPolicy
-from langgraph.pregel._runner import PregelRunner
+from langgraph.pregel._runner import PregelRunner, resolve_runner_submit
 from langgraph.pregel._tools import StreamToolCallHandler
 from langgraph.pregel._utils import (
     get_new_channel_versions,
@@ -2921,8 +2920,8 @@ class Pregel(
                 emit_graph_lifecycle_events(loop)
                 # create runner
                 runner = PregelRunner(
-                    submit=config[CONF].get(
-                        CONFIG_KEY_RUNNER_SUBMIT, weakref.WeakMethod(loop.submit)
+                    submit=resolve_runner_submit(
+                        config, weakref.WeakMethod(loop.submit)
                     ),
                     put_writes=weakref.WeakMethod(loop.put_writes),
                     node_finished=config[CONF].get(CONFIG_KEY_NODE_FINISHED),
@@ -3375,8 +3374,10 @@ class Pregel(
                 await aemit_graph_lifecycle_events(loop)
                 # create runner
                 runner = PregelRunner(
-                    submit=config[CONF].get(
-                        CONFIG_KEY_RUNNER_SUBMIT, weakref.WeakMethod(loop.submit)
+                    submit=resolve_runner_submit(
+                        config,
+                        weakref.WeakMethod(loop.submit),
+                        supports_inline=False,
                     ),
                     put_writes=weakref.WeakMethod(loop.put_writes),
                     use_astream=do_stream,

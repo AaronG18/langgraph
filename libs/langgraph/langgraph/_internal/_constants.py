@@ -65,6 +65,14 @@ CONFIG_KEY_SCRATCHPAD = sys.intern("__pregel_scratchpad")
 # holds a mutable dict for temporary storage scoped to the current task
 CONFIG_KEY_RUNNER_SUBMIT = sys.intern("__pregel_runner_submit")
 # holds a function that receives tasks from runner, executes them and returns results
+CONFIG_KEY_RUNNER_SUBMIT_MODE = sys.intern("__pregel_runner_submit_mode")
+# holds the task execution mode, one of "background" (default) or "inline".
+# "inline" runs each superstep's tasks on the calling thread instead of the
+# runner's BackgroundExecutor, for callers with thread-affine ambient state
+# (thread-local DB connections, contextvars snapshots, scoped sessions).
+# NOTE: unlike CONFIG_KEY_RUNNER_SUBMIT, this key is a plain string value;
+# it is routed through a submit factory by Pregel, so callers never have to
+# hand-construct one. CONFIG_KEY_RUNNER_SUBMIT still wins if both are set.
 CONFIG_KEY_DURABILITY = sys.intern("__pregel_durability")
 # holds the durability mode, one of "sync", "async", or "exit"
 CONFIG_KEY_RUNTIME = sys.intern("__pregel_runtime")

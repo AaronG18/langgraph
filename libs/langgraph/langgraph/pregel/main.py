@@ -1950,6 +1950,17 @@ class Pregel(
             run_tasks: list[PregelTaskWrites] = []
             run_task_ids: list[str] = []
 
+            # `update_state` runs a node's writers directly, outside the
+            # invoke/stream path, so no Runtime is present in `config`. Build
+            # one so parameters injected off the runtime (e.g. `store` on a
+            # conditional edge) can resolve. See #6340.
+            parent_runtime = config.get(CONF, {}).get(CONFIG_KEY_RUNTIME)
+            update_state_runtime = (
+                parent_runtime
+                if isinstance(parent_runtime, Runtime)
+                else DEFAULT_RUNTIME
+            ).override(store=self.store)
+
             for as_node, values, provided_task_id in valid_updates:
                 # create task to run all writers of the chosen node
                 writers = self.nodes[as_node].flat_writers
@@ -1979,6 +1990,7 @@ class Pregel(
                             # deque.extend is thread-safe
                             CONFIG_KEY_SEND: writes.extend,
                             CONFIG_KEY_TASK_ID: task_id,
+                            CONFIG_KEY_RUNTIME: update_state_runtime,
                             CONFIG_KEY_READ: partial(
                                 local_read,
                                 _scratchpad(
@@ -2410,6 +2422,17 @@ class Pregel(
             run_tasks: list[PregelTaskWrites] = []
             run_task_ids: list[str] = []
 
+            # `update_state` runs a node's writers directly, outside the
+            # invoke/stream path, so no Runtime is present in `config`. Build
+            # one so parameters injected off the runtime (e.g. `store` on a
+            # conditional edge) can resolve. See #6340.
+            parent_runtime = config.get(CONF, {}).get(CONFIG_KEY_RUNTIME)
+            update_state_runtime = (
+                parent_runtime
+                if isinstance(parent_runtime, Runtime)
+                else DEFAULT_RUNTIME
+            ).override(store=self.store)
+
             for as_node, values, provided_task_id in valid_updates:
                 # create task to run all writers of the chosen node
                 writers = self.nodes[as_node].flat_writers
@@ -2439,6 +2462,7 @@ class Pregel(
                             # deque.extend is thread-safe
                             CONFIG_KEY_SEND: writes.extend,
                             CONFIG_KEY_TASK_ID: task_id,
+                            CONFIG_KEY_RUNTIME: update_state_runtime,
                             CONFIG_KEY_READ: partial(
                                 local_read,
                                 _scratchpad(

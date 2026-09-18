@@ -41,6 +41,7 @@ from langchain_core.runnables.config import (
     var_child_runnable_config,
 )
 from langchain_core.runnables.utils import Input, Output
+from langchain_core.stores import BaseStore as LcBaseStore
 from langchain_core.tracers.langchain import LangChainTracer
 from langgraph.store.base import BaseStore
 
@@ -189,7 +190,9 @@ KWARGS_CONFIG_KEYS: tuple[tuple[str, tuple[Any, ...], str, Any], ...] = (
         "store",
         (
             BaseStore,
+            LcBaseStore,
             "BaseStore",
+            "langchain_core.stores.BaseStore",
             inspect.Parameter.empty,
         ),
         "store",
@@ -199,7 +202,9 @@ KWARGS_CONFIG_KEYS: tuple[tuple[str, tuple[Any, ...], str, Any], ...] = (
         "store",
         (
             Optional[BaseStore],  # noqa: UP045
+            Optional[LcBaseStore],  # noqa: UP045
             "Optional[BaseStore]",
+            "Optional[langchain_core.stores.BaseStore]",
         ),
         "store",
         None,

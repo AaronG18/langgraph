@@ -449,6 +449,23 @@ class PregelLoop:
             return None
         return self._graph_lifecycle_events.popleft()
 
+    def _has_untracked_value_channel(self) -> bool:
+        """Whether any channel is an `UntrackedValue`.
+
+        `self.channels` is assigned once when the checkpoint is loaded and stays
+        fixed for the lifetime of the loop, so the answer never changes. Compute it
+        once and cache it, instead of rescanning every channel on every
+        `put_writes` (O(tasks * channels)).
+        """
+        cached = getattr(self, "_has_untracked_value_cached", None)
+        if cached is None:
+            cached = any(
+                isinstance(channel, UntrackedValue)
+                for channel in self.channels.values()
+            )
+            self._has_untracked_value_cached = cached
+        return cached
+
     def put_writes(
         self, task_id: str, writes: WritesT, *, cached: bool = False
     ) -> None:
@@ -479,9 +496,7 @@ class PregelLoop:
             writes_to_save = writes
 
         # check if any writes are to an UntrackedValue channel
-        if any(
-            isinstance(channel, UntrackedValue) for channel in self.channels.values()
-        ):
+        if self._has_untracked_value_channel():
             # we do not persist untracked values in checkpoints
             writes_to_save = [
                 # sanitize UntrackedValues that are nested within Send packets
@@ -1293,9 +1308,8 @@ class PregelLoop:
         elif "counters_since_delta_snapshot" in self.checkpoint_metadata:
             del self.checkpoint_metadata["counters_since_delta_snapshot"]
         # sanitize TASK channel in the checkpoint before saving (durability=="exit")
-        if TASKS in self.checkpoint["channel_values"] and any(
-            isinstance(channel, UntrackedValue) for channel in self.channels.values()
-        ):
+        has_untracked = self._has_untracked_value_channel()
+        if TASKS in self.checkpoint["channel_values"] and has_untracked:
             sanitized_tasks = [
                 sanitize_untracked_values_in_send(value, self.channels)
                 if isinstance(value, Send)

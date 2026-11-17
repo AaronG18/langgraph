@@ -2422,3 +2422,82 @@ def test_tool_node_list_return_mixed_with_regular_tool() -> None:
     tool_call_ids = {m.tool_call_id for m in all_msgs}
     assert list_tool_id in tool_call_ids
     assert regular_tool_id in tool_call_ids
+
+
+class _StateWithTopic(MessagesState):
+    topic: str
+
+
+@dec_tool
+def _read_topic(topic: Annotated[str, InjectedState("topic")], runtime: ToolRuntime) -> str:
+    """Report the topic supplied to the tool."""
+    return f"injected={topic}, runtime={runtime.state['topic']}"
+
+
+def _make_override_graph():
+    def wrap(request, execute):
+        return execute(request.override(state={**request.state, "topic": "filtered"}))
+
+    builder = StateGraph(_StateWithTopic)
+    builder.add_node("tools", ToolNode([_read_topic], wrap_tool_call=wrap))
+    builder.add_edge(START, "tools")
+    return builder.compile()
+
+
+def _initial_state():
+    return {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "_read_topic", "args": {}, "id": "call_1", "type": "tool_call"}],
+            )
+        ],
+        "topic": "original",
+    }
+
+
+def _tool_content(result):
+    tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert tool_messages
+    return tool_messages[-1].content
+
+
+def test_wrap_tool_call_override_state_reaches_injection():
+    result = _make_override_graph().invoke(_initial_state())
+    assert _tool_content(result) == "injected=filtered, runtime=filtered"
+    # The graph state itself must not be mutated by the override.
+    assert result["topic"] == "original"
+
+
+async def test_wrap_tool_call_override_state_reaches_injection_async():
+    result = await _make_override_graph().ainvoke(_initial_state())
+    assert _tool_content(result) == "injected=filtered, runtime=filtered"
+    assert result["topic"] == "original"
+
+
+async def test_wrap_tool_call_parallel_overrides_are_isolated():
+    def wrap(request, execute):
+        suffix = request.tool_call["args"]["suffix"]
+        return execute(request.override(state={**request.state, "topic": suffix}))
+
+    @dec_tool
+    def read_topic_suffixed(topic: Annotated[str, InjectedState("topic")], suffix: str) -> str:
+        """Return the injected topic."""
+        return topic
+
+    builder = StateGraph(MessagesState)
+    builder.add_node("tools", ToolNode([read_topic_suffixed], wrap_tool_call=wrap))
+    builder.add_edge(START, "tools")
+    graph = builder.compile()
+
+    calls = [
+        {"name": "read_topic_suffixed", "args": {"suffix": "one"}, "id": "c1", "type": "tool_call"},
+        {"name": "read_topic_suffixed", "args": {"suffix": "two"}, "id": "c2", "type": "tool_call"},
+    ]
+    result = await graph.ainvoke({"messages": [AIMessage(content="", tool_calls=calls)]})
+
+    tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    by_id = {m.tool_call_id: m.content for m in tool_messages}
+    assert by_id["c1"] == "one"
+    assert by_id["c2"] == "two"
+

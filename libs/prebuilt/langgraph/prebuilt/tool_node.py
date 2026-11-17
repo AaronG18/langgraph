@@ -949,8 +949,14 @@ class ToolNode(RunnableCallable):
             msg = f"Tool {call['name']} is not registered with ToolNode"
             raise TypeError(msg)
 
-        # Inject state, store, and runtime right before invocation
-        injected_call = self._inject_tool_args(call, request.runtime, tool)
+        # Inject state, store, and runtime right before invocation.
+        # A wrapper may override the request state; make the runtime used for
+        # injection agree with it so InjectedState and ToolRuntime.state see
+        # the same per-call state. The graph state itself is not modified.
+        runtime = request.runtime
+        if request.state is not runtime.state:
+            runtime = replace(runtime, state=request.state)
+        injected_call = self._inject_tool_args(call, runtime, tool)
         call_args = {**injected_call, "type": "tool_call"}
 
         try:
@@ -1096,8 +1102,12 @@ class ToolNode(RunnableCallable):
             msg = f"Tool {call['name']} is not registered with ToolNode"
             raise TypeError(msg)
 
-        # Inject state, store, and runtime right before invocation
-        injected_call = self._inject_tool_args(call, request.runtime, tool)
+        # Inject state, store, and runtime right before invocation.
+        # See the sync path: a wrapper's state override must reach injection.
+        runtime = request.runtime
+        if request.state is not runtime.state:
+            runtime = replace(runtime, state=request.state)
+        injected_call = self._inject_tool_args(call, runtime, tool)
         call_args = {**injected_call, "type": "tool_call"}
 
         try:
